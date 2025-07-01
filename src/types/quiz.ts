@@ -22,6 +22,23 @@ export interface Quiz {
   createdAt: Date;
 }
 
+// Live Quiz Session structure
+export interface LiveQuizSession {
+  id: string;
+  quiz_id: string;
+  host_id: string;
+  join_code: string | null; // null for private quizzes
+  status: 'waiting' | 'in_progress' | 'completed';
+  scheduled_start?: Date;
+  scheduled_end?: Date;
+  started_at?: Date;
+  ended_at?: Date;
+  created_at: Date;
+  is_private?: boolean;
+  private_join_code?: string | null; // null for public quizzes
+  quiz?: Quiz;
+}
+
 // Defines the structure for a user's quiz results
 export interface QuizResult {
   id: string;

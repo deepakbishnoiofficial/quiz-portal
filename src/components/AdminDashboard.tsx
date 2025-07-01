@@ -3,12 +3,15 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { BookOpen, Users, Trophy, Plus, Edit, Trash2, Filter } from 'lucide-react';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { BookOpen, Users, Trophy, Plus, Edit, Trash2, Filter, Calendar, Play } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import QuizCreator from '@/components/QuizCreator';
-import type { Quiz } from '@/types/quiz';
+import LiveQuizCreator from '@/components/LiveQuizCreator';
+import LiveQuizManager from '@/components/LiveQuizManager';
+import type { Quiz, LiveQuizSession } from '@/types/quiz';
 
 interface AdminStats {
   totalQuizzes: number;
@@ -29,12 +32,18 @@ const AdminDashboard = () => {
     averageScore: 0
   });
   const [showQuizCreator, setShowQuizCreator] = useState(false);
+  const [showLiveQuizCreator, setShowLiveQuizCreator] = useState(false);
+  const [showLiveQuizManager, setShowLiveQuizManager] = useState(false);
+  const [liveSessions, setLiveSessions] = useState<LiveQuizSession[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetchQuizzes();
-    fetchStats();
-  }, []);
+    if (user?.id) {
+      fetchQuizzes();
+      fetchStats();
+      fetchLiveSessions();
+    }
+  }, [user?.id]);
 
   useEffect(() => {
     // Filter quizzes when category selection changes
@@ -127,6 +136,93 @@ const AdminDashboard = () => {
       toast.error('Failed to load quizzes');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchLiveSessions = async () => {
+    try {
+      console.log('Fetching live sessions for admin user:', user?.id);
+      
+      // First, let's check all sessions without filtering
+      const { data: allSessions, error: allError } = await supabase
+        .from('live_quiz_sessions')
+        .select('id, host_id, quiz_id, join_code, status, created_at')
+        .order('created_at', { ascending: false });
+      
+      console.log('All live sessions in database:', allSessions);
+      console.log('All sessions error:', allError);
+      
+      const { data: sessionsData, error } = await supabase
+        .from('live_quiz_sessions')
+        .select(`
+          *,
+          quizzes (
+            id,
+            title,
+            description,
+            category,
+            difficulty,
+            time_limit,
+            created_at,
+            questions (
+              id,
+              question_type,
+              question,
+              options,
+              correct_answer,
+              points
+            )
+          )
+        `)
+        .eq('host_id', user?.id)
+        .order('created_at', { ascending: false });
+
+      console.log('Filtered sessions data for user:', user?.id, sessionsData);
+      console.log('Fetch error:', error);
+
+      if (error) {
+        console.error('Error fetching live sessions:', error);
+        toast.error('Failed to load live quiz sessions');
+        return;
+      }
+
+      const formattedSessions: LiveQuizSession[] = sessionsData?.map(session => ({
+        id: session.id,
+        quiz_id: session.quiz_id,
+        host_id: session.host_id,
+        join_code: session.join_code,
+        status: session.status as 'waiting' | 'in_progress' | 'completed',
+        scheduled_start: session.scheduled_start ? new Date(session.scheduled_start) : undefined,
+        scheduled_end: session.scheduled_end ? new Date(session.scheduled_end) : undefined,
+        started_at: session.started_at ? new Date(session.started_at) : undefined,
+        ended_at: session.ended_at ? new Date(session.ended_at) : undefined,
+        created_at: new Date(session.created_at),
+        is_private: session.is_private,
+        private_join_code: session.private_join_code,
+        quiz: session.quizzes ? {
+          id: session.quizzes.id,
+          title: session.quizzes.title,
+          description: session.quizzes.description || '',
+          category: session.quizzes.category,
+          difficulty: session.quizzes.difficulty as 'Easy' | 'Medium' | 'Hard',
+          timeLimit: session.quizzes.time_limit,
+          questions: session.quizzes.questions?.map(q => ({
+            id: q.id,
+            type: q.question_type as 'multiple-choice' | 'true-false' | 'short-answer',
+            question: q.question,
+            options: q.options as string[] | undefined,
+            correctAnswer: q.correct_answer,
+            points: q.points
+          })) || [],
+          createdAt: new Date(session.quizzes.created_at)
+        } : undefined
+      })) || [];
+
+      console.log('Formatted live sessions:', formattedSessions);
+      setLiveSessions(formattedSessions);
+    } catch (error) {
+      console.error('Error fetching live sessions:', error);
+      toast.error('Failed to load live quiz sessions');
     }
   };
 
@@ -223,6 +319,33 @@ const AdminDashboard = () => {
     }
   };
 
+  const handleSessionCreated = (newSession: LiveQuizSession) => {
+    console.log('Session created, refreshing live sessions list...');
+    // Refresh from database to ensure we have the latest data with all fields
+    fetchLiveSessions();
+  };
+
+  const handleSessionUpdate = (updatedSession: LiveQuizSession) => {
+    setLiveSessions(prev => 
+      prev.map(session => 
+        session.id === updatedSession.id ? updatedSession : session
+      )
+    );
+  };
+
+  const handleSessionDelete = (sessionId: string) => {
+    setLiveSessions(prev => prev.filter(session => session.id !== sessionId));
+  };
+
+  const handleStartSession = (session: LiveQuizSession) => {
+    const updatedSession = {
+      ...session,
+      status: 'in_progress' as const,
+      started_at: new Date()
+    };
+    handleSessionUpdate(updatedSession);
+  };
+
   // Update stats when quizzes change
   useEffect(() => {
     if (quizzes.length > 0) {
@@ -260,7 +383,7 @@ const AdminDashboard = () => {
             className="bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-700 hover:to-purple-800"
           >
             <Plus className="h-4 w-4 mr-2" />
-            Create Quiz
+            Create Quiz 
           </Button>
         </div>
 
@@ -323,35 +446,69 @@ const AdminDashboard = () => {
           </Card>
         </div>
 
-        {/* Quizzes List */}
-        <Card className="bg-white/80 backdrop-blur-sm border-0 shadow-lg">
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <div>
-                <CardTitle>Manage Quizzes</CardTitle>
-                <CardDescription>Create, edit, and manage your quizzes</CardDescription>
-              </div>
-              {categories.length > 0 && (
-                <div className="flex items-center gap-2">
-                  <Filter className="h-4 w-4 text-gray-500" />
-                  <Select value={selectedCategory} onValueChange={setSelectedCategory}>
-                    <SelectTrigger className="w-48">
-                      <SelectValue placeholder="Filter by category" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Categories</SelectItem>
-                      {categories.map((category) => (
-                        <SelectItem key={category} value={category}>
-                          {category}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
+        {/* Main Content with Tabs */}
+        <Tabs defaultValue="quizzes" className="space-y-6">
+          <div className="flex items-center justify-between">
+            <TabsList className="grid w-auto grid-cols-2">
+              <TabsTrigger value="quizzes" className="flex items-center gap-2">
+                <BookOpen className="h-4 w-4" />
+                Regular Quizzes
+              </TabsTrigger>
+              <TabsTrigger value="live" className="flex items-center gap-2">
+                <Play className="h-4 w-4" />
+                Live Quizzes
+              </TabsTrigger>
+            </TabsList>
+
+            <div className="flex gap-2">
+              <Button 
+                onClick={() => setShowLiveQuizCreator(true)}
+                variant="outline"
+                className="bg-green-50 hover:bg-green-100 text-green-700 border-green-200"
+              >
+                <Calendar className="h-4 w-4 mr-2" />
+                Schedule Live Quiz
+              </Button>
+              <Button 
+                onClick={() => setShowQuizCreator(true)}
+                className="bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-700 hover:to-purple-800"
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                Create Quiz
+              </Button>
             </div>
-          </CardHeader>
-          <CardContent>
+          </div>
+
+          <TabsContent value="quizzes">
+            {/* Regular Quizzes List */}
+            <Card className="bg-white/80 backdrop-blur-sm border-0 shadow-lg">
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle>Manage Quizzes</CardTitle>
+                    <CardDescription>Create, edit, and manage your quizzes</CardDescription>
+                  </div>
+                  {categories.length > 0 && (
+                    <div className="flex items-center gap-2">
+                      <Filter className="h-4 w-4 text-gray-500" />
+                      <Select value={selectedCategory} onValueChange={setSelectedCategory}>
+                        <SelectTrigger className="w-48">
+                          <SelectValue placeholder="Filter by category" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">All Categories</SelectItem>
+                          {categories.map((category) => (
+                            <SelectItem key={category} value={category}>
+                              {category}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                </div>
+              </CardHeader>
+              <CardContent>
             {loading ? (
               <div className="text-center py-8">
                 <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
@@ -406,8 +563,52 @@ const AdminDashboard = () => {
                 ))}
               </div>
             )}
-          </CardContent>
-        </Card>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="live">
+            {/* Live Quiz Sessions */}
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-lg font-semibold">Live Quiz Sessions</h3>
+                  <p className="text-sm text-gray-600">Manage your scheduled and active live quizzes</p>
+                </div>
+                <Button 
+                  onClick={fetchLiveSessions}
+                  variant="outline"
+                  size="sm"
+                >
+                  Refresh Sessions
+                </Button>
+              </div>
+              
+              <LiveQuizManager
+                sessions={liveSessions}
+                onSessionUpdate={handleSessionUpdate}
+                onSessionDelete={handleSessionDelete}
+                onStartSession={handleStartSession}
+              />
+            </div>
+          </TabsContent>
+        </Tabs>
+
+        {/* Modals */}
+        {showQuizCreator && (
+          <QuizCreator 
+            onSave={handleSaveQuiz}
+            onCancel={() => setShowQuizCreator(false)}
+          />
+        )}
+
+        {showLiveQuizCreator && (
+          <LiveQuizCreator
+            isOpen={showLiveQuizCreator}
+            onClose={() => setShowLiveQuizCreator(false)}
+            onSessionCreated={handleSessionCreated}
+          />
+        )}
       </div>
     </div>
   );
