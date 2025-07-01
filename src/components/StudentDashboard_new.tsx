@@ -230,13 +230,10 @@ const StudentDashboard = () => {
   };
 
   const fetchLiveSessions = async () => {
-    if (!user) return;
-    
     try {
       console.log('Student: Fetching live sessions...');
       
-      // First, get public sessions (not private)
-      const { data: publicSessions, error: publicError } = await supabase
+      const { data: sessionsData, error } = await supabase
         .from('live_quiz_sessions')
         .select(`
           *,
@@ -258,63 +255,18 @@ const StudentDashboard = () => {
             )
           )
         `)
-        .eq('is_private', false)
         .in('status', ['waiting', 'in_progress'])
         .order('created_at', { ascending: false });
 
-      if (publicError) {
-        console.error('Error fetching public sessions:', publicError);
+      if (error) {
+        console.error('Error fetching live sessions:', error);
         return;
       }
 
-      // Then, get private sessions the user has joined
-      const { data: privateSessions, error: privateError } = await supabase
-        .from('live_quiz_sessions')
-        .select(`
-          *,
-          quizzes (
-            id,
-            title,
-            description,
-            category,
-            difficulty,
-            time_limit,
-            created_at,
-            questions (
-              id,
-              question_type,
-              question,
-              options,
-              correct_answer,
-              points
-            )
-          ),
-          private_quiz_participants!inner (
-            student_id
-          )
-        `)
-        .eq('is_private', true)
-        .eq('private_quiz_participants.student_id', user.id)
-        .in('status', ['waiting', 'in_progress'])
-        .order('created_at', { ascending: false });
-
-      if (privateError) {
-        console.error('Error fetching private sessions:', privateError);
-        console.error('Private sessions error details:', privateError.message);
-        return;
-      }
-
-      console.log('Student: Private sessions raw data:', privateSessions);
-
-      // Combine both types of sessions
-      const allSessions = [...(publicSessions || []), ...(privateSessions || [])];
-      
-      console.log('Student: Public sessions:', publicSessions?.length || 0);
-      console.log('Student: Private sessions user joined:', privateSessions?.length || 0);
-      console.log('Student: Combined sessions data:', allSessions);
+      console.log('Student: Raw live sessions data:', sessionsData);
 
       const now = new Date();
-      const availableSessions: LiveQuizSession[] = allSessions.filter(session => {
+      const availableSessions: LiveQuizSession[] = sessionsData?.filter(session => {
         // Skip sessions that have ended
         if (session.scheduled_end && new Date(session.scheduled_end) < now) {
           return false;

@@ -9,28 +9,128 @@ export type Json =
 export type Database = {
   public: {
     Tables: {
+      live_quiz_sessions: {
+        Row: {
+          created_at: string
+          ended_at: string | null
+          host_id: string
+          id: string
+          is_private: boolean | null
+          join_code: string
+          private_join_code: string | null
+          quiz_id: string
+          scheduled_end: string | null
+          scheduled_start: string | null
+          started_at: string | null
+          status: Database["public"]["Enums"]["live_quiz_status"]
+        }
+        Insert: {
+          created_at?: string
+          ended_at?: string | null
+          host_id: string
+          id?: string
+          is_private?: boolean | null
+          join_code: string
+          private_join_code?: string | null
+          quiz_id: string
+          scheduled_end?: string | null
+          scheduled_start?: string | null
+          started_at?: string | null
+          status?: Database["public"]["Enums"]["live_quiz_status"]
+        }
+        Update: {
+          created_at?: string
+          ended_at?: string | null
+          host_id?: string
+          id?: string
+          is_private?: boolean | null
+          join_code?: string
+          private_join_code?: string | null
+          quiz_id?: string
+          scheduled_end?: string | null
+          scheduled_start?: string | null
+          started_at?: string | null
+          status?: Database["public"]["Enums"]["live_quiz_status"]
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_quiz_sessions_quiz_id_fkey"
+            columns: ["quiz_id"]
+            isOneToOne: false
+            referencedRelation: "quizzes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      private_quiz_participants: {
+        Row: {
+          id: string
+          joined_at: string | null
+          session_id: string
+          student_id: string
+        }
+        Insert: {
+          id?: string
+          joined_at?: string | null
+          session_id: string
+          student_id: string
+        }
+        Update: {
+          id?: string
+          joined_at?: string | null
+          session_id?: string
+          student_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "private_quiz_participants_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_quiz_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profiles: {
         Row: {
           created_at: string | null
+          date_of_birth: string | null
+          display_name: string | null
           email: string
+          enrolled_courses: string[] | null
+          first_name: string | null
           full_name: string | null
+          gender: string | null
           id: string
+          last_name: string | null
           role: Database["public"]["Enums"]["user_role"]
           updated_at: string | null
         }
         Insert: {
           created_at?: string | null
+          date_of_birth?: string | null
+          display_name?: string | null
           email: string
+          enrolled_courses?: string[] | null
+          first_name?: string | null
           full_name?: string | null
+          gender?: string | null
           id: string
+          last_name?: string | null
           role?: Database["public"]["Enums"]["user_role"]
           updated_at?: string | null
         }
         Update: {
           created_at?: string | null
+          date_of_birth?: string | null
+          display_name?: string | null
           email?: string
+          enrolled_courses?: string[] | null
+          first_name?: string | null
           full_name?: string | null
+          gender?: string | null
           id?: string
+          last_name?: string | null
           role?: Database["public"]["Enums"]["user_role"]
           updated_at?: string | null
         }
@@ -85,6 +185,7 @@ export type Database = {
           quiz_id: string | null
           score: number
           student_id: string | null
+          student_name: string | null
           time_taken: number | null
           total_points: number
         }
@@ -95,6 +196,7 @@ export type Database = {
           quiz_id?: string | null
           score: number
           student_id?: string | null
+          student_name?: string | null
           time_taken?: number | null
           total_points: number
         }
@@ -105,6 +207,7 @@ export type Database = {
           quiz_id?: string | null
           score?: number
           student_id?: string | null
+          student_name?: string | null
           time_taken?: number | null
           total_points?: number
         }
@@ -169,6 +272,42 @@ export type Database = {
           },
         ]
       }
+      quiz_waitlist: {
+        Row: {
+          id: string
+          joined_at: string | null
+          session_id: string
+          student_id: string
+        }
+        Insert: {
+          id?: string
+          joined_at?: string | null
+          session_id: string
+          student_id: string
+        }
+        Update: {
+          id?: string
+          joined_at?: string | null
+          session_id?: string
+          student_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "quiz_waitlist_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_quiz_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "quiz_waitlist_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
@@ -180,6 +319,7 @@ export type Database = {
       }
     }
     Enums: {
+      live_quiz_status: "waiting" | "in_progress" | "completed"
       question_type: "multiple-choice" | "true-false" | "short-answer"
       quiz_difficulty: "Easy" | "Medium" | "Hard"
       user_role: "admin" | "student"
@@ -298,6 +438,7 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
+      live_quiz_status: ["waiting", "in_progress", "completed"],
       question_type: ["multiple-choice", "true-false", "short-answer"],
       quiz_difficulty: ["Easy", "Medium", "Hard"],
       user_role: ["admin", "student"],

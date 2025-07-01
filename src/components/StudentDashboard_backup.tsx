@@ -1,4 +1,5 @@
-import { Tv, Users, LogIn, Lock } from 'lucide-react'; 
+// Add these to your existing imports
+import { Tv, Users, LogIn } from 'lucide-react'; 
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -31,6 +32,8 @@ const AVAILABLE_COURSES = [
   'Geography'
 ];
 
+type Profile = Database['public']['Tables']['profiles']['Row'];
+
 const StudentDashboard = () => {
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<'available' | 'completed'>('available');
@@ -49,6 +52,7 @@ const StudentDashboard = () => {
   const [privateJoinCode, setPrivateJoinCode] = useState('');
   const [joinedPrivateQuizzes, setJoinedPrivateQuizzes] = useState<Set<string>>(new Set()); // Track private quizzes user has joined
   
+  
   const [profile, setProfile] = useState({
     displayName: '',
     email: '',
@@ -65,12 +69,12 @@ const StudentDashboard = () => {
 
   useEffect(() => {
     if (user) {
-      fetchQuizzes();
-      fetchResults();
-      fetchProfile();
-      fetchLiveSessions();
-      fetchUserWaitlists();
-      fetchJoinedPrivateQuizzes();
+        fetchQuizzes();
+        fetchResults();
+        fetchProfile();
+        fetchLiveSessions();
+        fetchUserWaitlists();
+        fetchJoinedPrivateQuizzes();
     }
   }, [user]);
 
@@ -100,19 +104,20 @@ const StudentDashboard = () => {
         return;
       }
 
-      setProfile({
-        displayName: data?.full_name || data?.display_name || user.email?.split('@')[0] || 'Student',
-        email: user.email || '',
-        dateOfJoining: new Date(data?.created_at || new Date()),
-        enrolledCourses: data?.enrolled_courses || [],
-      });
-
-      setEditProfile({
-        fullName: data?.full_name || '',
-        dateOfBirth: data?.date_of_birth || '',
-        gender: data?.gender || '',
-        enrolledCourses: data?.enrolled_courses || [],
-      });
+      if (data) {
+        setProfile({
+          displayName: data.full_name || user.email || 'Student',
+          email: user.email || 'No email provided',
+          dateOfJoining: new Date(data.created_at),
+          enrolledCourses: data.enrolled_courses ?? ['General Knowledge'],
+        });
+        setEditProfile({
+          fullName: data.full_name || '',
+          dateOfBirth: data.date_of_birth ?? '',
+          gender: data.gender ?? 'Prefer not to say',
+          enrolledCourses: data.enrolled_courses ?? [],
+        });
+      }
     } catch (error) {
       console.error('Error fetching profile:', error);
     }
@@ -129,32 +134,28 @@ const StudentDashboard = () => {
           date_of_birth: editProfile.dateOfBirth,
           gender: editProfile.gender,
           enrolled_courses: editProfile.enrolledCourses,
+          updated_at: new Date().toISOString(),
         })
         .eq('id', user.id);
 
       if (error) {
-        console.error('Error updating profile:', error);
-        toast.error('Failed to update profile');
-        return;
+        toast.error(`Database Error: ${error.message}`);
+        throw error;
       }
 
       toast.success('Profile updated successfully!');
       fetchProfile();
     } catch (error) {
       console.error('Error updating profile:', error);
-      toast.error('Failed to update profile');
     }
   };
 
   const handleCourseChange = (course: string) => {
     setEditProfile(prev => {
-      const isEnrolled = prev.enrolledCourses.includes(course);
-      return {
-        ...prev,
-        enrolledCourses: isEnrolled
-          ? prev.enrolledCourses.filter(c => c !== course)
-          : [...prev.enrolledCourses, course]
-      };
+        const newCourses = prev.enrolledCourses.includes(course)
+            ? prev.enrolledCourses.filter(c => c !== course)
+            : [...prev.enrolledCourses, course];
+        return { ...prev, enrolledCourses: newCourses };
     });
   };
 
@@ -204,6 +205,7 @@ const StudentDashboard = () => {
     try {
       const { data: resultsData, error } = await supabase
         .from('quiz_results')
+        // FIX: Ensure you are selecting the time_taken column
         .select(`*, time_taken, profiles:student_id (full_name)`)
         .eq('student_id', user.id);
 
@@ -220,6 +222,7 @@ const StudentDashboard = () => {
         totalPoints: result.total_points,
         completedAt: new Date(result.completed_at),
         answers: result.answers as Record<string, string>,
+        // FIX: Add the timeTaken property, with a fallback for old results
         timeTaken: result.time_taken ?? 0
       })) || [];
 
@@ -230,13 +233,10 @@ const StudentDashboard = () => {
   };
 
   const fetchLiveSessions = async () => {
-    if (!user) return;
-    
     try {
       console.log('Student: Fetching live sessions...');
       
-      // First, get public sessions (not private)
-      const { data: publicSessions, error: publicError } = await supabase
+      const { data: sessionsData, error } = await supabase
         .from('live_quiz_sessions')
         .select(`
           *,
@@ -258,68 +258,29 @@ const StudentDashboard = () => {
             )
           )
         `)
-        .eq('is_private', false)
         .in('status', ['waiting', 'in_progress'])
         .order('created_at', { ascending: false });
 
-      if (publicError) {
-        console.error('Error fetching public sessions:', publicError);
+      if (error) {
+        console.error('Error fetching live sessions:', error);
         return;
       }
 
-      // Then, get private sessions the user has joined
-      const { data: privateSessions, error: privateError } = await supabase
-        .from('live_quiz_sessions')
-        .select(`
-          *,
-          quizzes (
-            id,
-            title,
-            description,
-            category,
-            difficulty,
-            time_limit,
-            created_at,
-            questions (
-              id,
-              question_type,
-              question,
-              options,
-              correct_answer,
-              points
-            )
-          ),
-          private_quiz_participants!inner (
-            student_id
-          )
-        `)
-        .eq('is_private', true)
-        .eq('private_quiz_participants.student_id', user.id)
-        .in('status', ['waiting', 'in_progress'])
-        .order('created_at', { ascending: false });
-
-      if (privateError) {
-        console.error('Error fetching private sessions:', privateError);
-        console.error('Private sessions error details:', privateError.message);
-        return;
-      }
-
-      console.log('Student: Private sessions raw data:', privateSessions);
-
-      // Combine both types of sessions
-      const allSessions = [...(publicSessions || []), ...(privateSessions || [])];
-      
-      console.log('Student: Public sessions:', publicSessions?.length || 0);
-      console.log('Student: Private sessions user joined:', privateSessions?.length || 0);
-      console.log('Student: Combined sessions data:', allSessions);
+      console.log('Student: Raw live sessions data:', sessionsData);
 
       const now = new Date();
-      const availableSessions: LiveQuizSession[] = allSessions.filter(session => {
-        // Skip sessions that have ended
-        if (session.scheduled_end && new Date(session.scheduled_end) < now) {
-          return false;
+      const availableSessions: LiveQuizSession[] = sessionsData?.filter(session => {
+        // Show ALL sessions that are not completed and not ended
+        if (session.status === 'in_progress') return true;
+        if (session.status === 'waiting') {
+          // If there's a scheduled end time, make sure we haven't passed it
+          if (session.scheduled_end) {
+            const endTime = new Date(session.scheduled_end);
+            return now <= endTime; // Show if we haven't passed the end time
+          }
+          return true; // Show all waiting sessions without end time
         }
-        return true;
+        return false;
       }).map(session => ({
         id: session.id,
         quiz_id: session.quiz_id,
@@ -331,8 +292,6 @@ const StudentDashboard = () => {
         started_at: session.started_at ? new Date(session.started_at) : undefined,
         ended_at: session.ended_at ? new Date(session.ended_at) : undefined,
         created_at: new Date(session.created_at),
-        is_private: session.is_private,
-        private_join_code: session.private_join_code,
         quiz: session.quizzes ? {
           id: session.quizzes.id,
           title: session.quizzes.title,
@@ -412,18 +371,7 @@ const StudentDashboard = () => {
       // First, find the session with this private join code
       const { data: sessionData, error: sessionError } = await supabase
         .from('live_quiz_sessions')
-        .select(`
-          *,
-          quizzes (
-            id,
-            title,
-            description,
-            category,
-            difficulty,
-            time_limit,
-            created_at
-          )
-        `)
+        .select('*')
         .eq('private_join_code', privateJoinCode.trim().toUpperCase())
         .eq('is_private', true)
         .single();
@@ -464,7 +412,7 @@ const StudentDashboard = () => {
       }
 
       setJoinedPrivateQuizzes(prev => new Set([...prev, sessionData.id]));
-      toast.success(`Successfully joined private quiz: ${sessionData.quizzes?.title || 'Quiz'}`);
+      toast.success(`Successfully joined private quiz: ${sessionData.quiz?.title || 'Quiz'}`);
       setShowPrivateJoinDialog(false);
       setPrivateJoinCode('');
       
@@ -476,81 +424,551 @@ const StudentDashboard = () => {
     }
   };
 
-  const joinLiveSession = async (session: LiveQuizSession) => {
+  const handleCourseChange = (course: string) => {
+    setEditProfile(prev => {
+        const newCourses = prev.enrolledCourses.includes(course)
+            ? prev.enrolledCourses.filter(c => c !== course)
+            : [...prev.enrolledCourses, course];
+        return { ...prev, enrolledCourses: newCourses };
+    });
+  };
+
+  const fetchQuizzes = async () => {
     try {
-      const now = new Date();
-      const startTime = session.scheduled_start ? new Date(session.scheduled_start) : null;
-      const endTime = session.scheduled_end ? new Date(session.scheduled_end) : null;
-      
-      // Check if the quiz has started or should start now
-      const hasStarted = !startTime || now >= startTime;
-      const hasEnded = endTime && now > endTime;
-      
-      if (hasEnded) {
-        toast.error('This live quiz session has ended.');
+      const { data: quizzesData, error } = await supabase
+        .from('quizzes')
+        .select(`*, questions(*)`)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('Error fetching quizzes:', error);
+        toast.error('Failed to load quizzes');
         return;
       }
-      
-      setCurrentLiveSession(session);
-      
-      if (session.quiz) {
-        if (session.status === 'in_progress' || hasStarted) {
-          // Quiz is live, start immediately
-          setCurrentView('taking');
-        } else {
-          // Quiz hasn't started yet, join waitlist and lobby
-          if (!joinedWaitlists.has(session.id)) {
-            const { error } = await supabase
-              .from('quiz_waitlist')
-              .insert({
-                session_id: session.id,
-                student_id: user?.id
-              });
 
-            if (error) {
-              console.error('Error joining waitlist:', error);
-              toast.error('Failed to join waitlist');
-              return;
-            }
+      const formattedQuizzes: Quiz[] = quizzesData?.map(quiz => ({
+        id: quiz.id,
+        title: quiz.title,
+        description: quiz.description || '',
+        category: quiz.category,
+        difficulty: quiz.difficulty as 'Easy' | 'Medium' | 'Hard',
+        timeLimit: quiz.time_limit,
+        questions: quiz.questions?.map(q => ({
+          id: q.id,
+          type: q.question_type as 'multiple-choice' | 'true-false' | 'short-answer',
+          question: q.question,
+          options: q.options as string[] | undefined,
+          correctAnswer: q.correct_answer,
+          points: q.points
+        })) || [],
+        createdAt: new Date(quiz.created_at)
+      })) || [];
 
-            setJoinedWaitlists(prev => new Set([...prev, session.id]));
-            toast.success('Joined waitlist! You\'ll be notified when the quiz starts.');
-          }
-          
-          setCurrentView('live-lobby');
-        }
-      }
+      setQuizzes(formattedQuizzes);
     } catch (error) {
-      console.error('Error joining live session:', error);
-      toast.error('Failed to join live quiz');
+      console.error('Error fetching quizzes:', error);
+      toast.error('Failed to load quizzes');
+    } finally {
+      setLoading(false);
     }
   };
 
-  const leaveWaitlist = async (sessionId: string) => {
+  const fetchResults = async () => {
+    if (!user) return;
+
     try {
-      const { error } = await supabase
-        .from('quiz_waitlist')
-        .delete()
-        .eq('session_id', sessionId)
-        .eq('student_id', user?.id);
+      const { data: resultsData, error } = await supabase
+        .from('quiz_results')
+        // FIX: Ensure you are selecting the time_taken column
+        .select(`*, time_taken, profiles:student_id (full_name)`)
+        .eq('student_id', user.id);
 
       if (error) {
-        console.error('Error leaving waitlist:', error);
-        toast.error('Failed to leave waitlist');
+        console.error('Error fetching results:', error);
         return;
       }
 
-      setJoinedWaitlists(prev => {
-        const newSet = new Set(prev);
-        newSet.delete(sessionId);
-        return newSet;
-      });
-      // Refresh the waitlist state from database to ensure consistency
-      fetchUserWaitlists();
-      toast.success('Left waitlist');
+      const formattedResults: QuizResult[] = resultsData?.map(result => ({
+        id: result.id,
+        quizId: result.quiz_id,
+        studentName: result.profiles?.full_name || user.email || 'Student',
+        score: result.score,
+        totalPoints: result.total_points,
+        completedAt: new Date(result.completed_at),
+        answers: result.answers as Record<string, string>,
+        // FIX: Add the timeTaken property, with a fallback for old results
+        timeTaken: result.time_taken ?? 0
+      })) || [];
+
+      setResults(formattedResults);
     } catch (error) {
-      console.error('Error leaving waitlist:', error);
-      toast.error('Failed to leave waitlist');
+      console.error('Error fetching results:', error);
+    }
+  };
+
+  const fetchLiveSessions = async () => {
+    try {
+      console.log('Student: Fetching live sessions...');
+      
+      const { data: sessionsData, error } = await supabase
+        .from('live_quiz_sessions')
+        .select(`
+          *,
+          quizzes (
+            id,
+            title,
+            description,
+            category,
+            difficulty,
+            time_limit,
+            created_at,
+            questions (
+              id,
+              question_type,
+              question,
+              options,
+              correct_answer,
+              points
+            )
+          )
+        `)
+        .in('status', ['waiting', 'in_progress'])
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('Error fetching live sessions:', error);
+        return;
+      }
+
+      console.log('Student: Raw live sessions data:', sessionsData);
+
+      const now = new Date();
+      const availableSessions: LiveQuizSession[] = sessionsData?.filter(session => {
+        // Show ALL sessions that are not completed and not ended
+        if (session.status === 'in_progress') return true;
+        if (session.status === 'waiting') {
+          // If there's a scheduled end time, make sure we haven't passed it
+          if (session.scheduled_end) {
+            const endTime = new Date(session.scheduled_end);
+            return now <= endTime; // Show if we haven't passed the end time
+          }
+          return true; // Show all waiting sessions without end time
+        }
+        return false;
+      }).map(session => ({
+        id: session.id,
+        quiz_id: session.quiz_id,
+        host_id: session.host_id,
+        join_code: session.join_code,
+        status: session.status as 'waiting' | 'in_progress' | 'completed',
+        scheduled_start: session.scheduled_start ? new Date(session.scheduled_start) : undefined,
+        scheduled_end: session.scheduled_end ? new Date(session.scheduled_end) : undefined,
+        started_at: session.started_at ? new Date(session.started_at) : undefined,
+        ended_at: session.ended_at ? new Date(session.ended_at) : undefined,
+        created_at: new Date(session.created_at),
+        quiz: session.quizzes ? {
+          id: session.quizzes.id,
+          title: session.quizzes.title,
+          description: session.quizzes.description || '',
+          category: session.quizzes.category,
+          difficulty: session.quizzes.difficulty as 'Easy' | 'Medium' | 'Hard',
+          timeLimit: session.quizzes.time_limit,
+          questions: session.quizzes.questions?.map(q => ({
+            id: q.id,
+            type: q.question_type as 'multiple-choice' | 'true-false' | 'short-answer',
+            question: q.question,
+            options: q.options as string[] | undefined,
+            correctAnswer: q.correct_answer,
+            points: q.points
+          })) || [],
+          createdAt: new Date(session.quizzes.created_at)
+        } : undefined
+      })) || [];
+
+      console.log('Student: Filtered available sessions:', availableSessions);
+      console.log('Student: Sessions count:', availableSessions.length);
+      setLiveSessions(availableSessions);
+    } catch (error) {
+      console.error('Error fetching live sessions:', error);
+    }
+  };
+
+  const fetchUserWaitlists = async () => {
+    if (!user) return;
+
+    try {
+      const { data: waitlistData, error } = await supabase
+        .from('quiz_waitlist')
+        .select('session_id')
+        .eq('student_id', user.id);
+
+      if (error) {
+        console.error('Error fetching user waitlists:', error);
+        return;
+      }
+
+      const sessionIds = waitlistData?.map(item => item.session_id) || [];
+      setJoinedWaitlists(new Set(sessionIds));
+    } catch (error) {
+      console.error('Error fetching user waitlists:', error);
+    }
+  };
+
+  const fetchJoinedPrivateQuizzes = async () => {
+    if (!user) return;
+
+    try {
+      const { data: privateData, error } = await supabase
+        .from('private_quiz_participants')
+        .select('session_id')
+        .eq('student_id', user.id);
+
+      if (error) {
+        console.error('Error fetching joined private quizzes:', error);
+        return;
+      }
+
+      const sessionIds = privateData?.map(item => item.session_id) || [];
+      setJoinedPrivateQuizzes(new Set(sessionIds));
+    } catch (error) {
+      console.error('Error fetching joined private quizzes:', error);
+    }
+  };
+
+  const joinPrivateQuiz = async () => {
+    if (!user || !privateJoinCode.trim()) {
+      toast.error('Please enter a valid join code');
+      return;
+    }
+
+    try {
+      // First, find the session with this private join code
+      const { data: sessionData, error: sessionError } = await supabase
+        .from('live_quiz_sessions')
+        .select('*')
+        .eq('private_join_code', privateJoinCode.trim().toUpperCase())
+        .eq('is_private', true)
+        .single();
+
+      if (sessionError || !sessionData) {
+        toast.error('Invalid join code or quiz not found');
+        return;
+      }
+
+      // Check if already joined
+      const { data: existingParticipant } = await supabase
+        .from('private_quiz_participants')
+        .select('id')
+        .eq('session_id', sessionData.id)
+        .eq('student_id', user.id)
+        .single();
+
+      if (existingParticipant) {
+        toast.info('You are already part of this private quiz');
+        setShowPrivateJoinDialog(false);
+        setPrivateJoinCode('');
+        fetchLiveSessions(); // Refresh to show the quiz
+        return;
+      }
+
+      // Add user to private quiz participants
+      const { error: insertError } = await supabase
+        .from('private_quiz_participants')
+        .insert({
+          session_id: sessionData.id,
+          student_id: user.id
+        });
+
+      if (insertError) {
+        console.error('Error joining private quiz:', insertError);
+        toast.error('Failed to join private quiz');
+        return;
+      }
+
+      setJoinedPrivateQuizzes(prev => new Set([...prev, sessionData.id]));
+      toast.success(`Successfully joined private quiz: ${sessionData.quiz?.title || 'Quiz'}`);
+      setShowPrivateJoinDialog(false);
+      setPrivateJoinCode('');
+      
+      // Refresh live sessions to show the newly joined private quiz
+      fetchLiveSessions();
+    } catch (error) {
+      console.error('Error joining private quiz:', error);
+      toast.error('Failed to join private quiz');
+    }
+  };
+
+  const handleCourseChange = (course: string) => {
+    setEditProfile(prev => {
+        const newCourses = prev.enrolledCourses.includes(course)
+            ? prev.enrolledCourses.filter(c => c !== course)
+            : [...prev.enrolledCourses, course];
+        return { ...prev, enrolledCourses: newCourses };
+    });
+  };
+
+  const fetchQuizzes = async () => {
+    try {
+      const { data: quizzesData, error } = await supabase
+        .from('quizzes')
+        .select(`*, questions(*)`)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('Error fetching quizzes:', error);
+        toast.error('Failed to load quizzes');
+        return;
+      }
+
+      const formattedQuizzes: Quiz[] = quizzesData?.map(quiz => ({
+        id: quiz.id,
+        title: quiz.title,
+        description: quiz.description || '',
+        category: quiz.category,
+        difficulty: quiz.difficulty as 'Easy' | 'Medium' | 'Hard',
+        timeLimit: quiz.time_limit,
+        questions: quiz.questions?.map(q => ({
+          id: q.id,
+          type: q.question_type as 'multiple-choice' | 'true-false' | 'short-answer',
+          question: q.question,
+          options: q.options as string[] | undefined,
+          correctAnswer: q.correct_answer,
+          points: q.points
+        })) || [],
+        createdAt: new Date(quiz.created_at)
+      })) || [];
+
+      setQuizzes(formattedQuizzes);
+    } catch (error) {
+      console.error('Error fetching quizzes:', error);
+      toast.error('Failed to load quizzes');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchResults = async () => {
+    if (!user) return;
+
+    try {
+      const { data: resultsData, error } = await supabase
+        .from('quiz_results')
+        // FIX: Ensure you are selecting the time_taken column
+        .select(`*, time_taken, profiles:student_id (full_name)`)
+        .eq('student_id', user.id);
+
+      if (error) {
+        console.error('Error fetching results:', error);
+        return;
+      }
+
+      const formattedResults: QuizResult[] = resultsData?.map(result => ({
+        id: result.id,
+        quizId: result.quiz_id,
+        studentName: result.profiles?.full_name || user.email || 'Student',
+        score: result.score,
+        totalPoints: result.total_points,
+        completedAt: new Date(result.completed_at),
+        answers: result.answers as Record<string, string>,
+        // FIX: Add the timeTaken property, with a fallback for old results
+        timeTaken: result.time_taken ?? 0
+      })) || [];
+
+      setResults(formattedResults);
+    } catch (error) {
+      console.error('Error fetching results:', error);
+    }
+  };
+
+  const fetchLiveSessions = async () => {
+    try {
+      console.log('Student: Fetching live sessions...');
+      
+      const { data: sessionsData, error } = await supabase
+        .from('live_quiz_sessions')
+        .select(`
+          *,
+          quizzes (
+            id,
+            title,
+            description,
+            category,
+            difficulty,
+            time_limit,
+            created_at,
+            questions (
+              id,
+              question_type,
+              question,
+              options,
+              correct_answer,
+              points
+            )
+          )
+        `)
+        .in('status', ['waiting', 'in_progress'])
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('Error fetching live sessions:', error);
+        return;
+      }
+
+      console.log('Student: Raw live sessions data:', sessionsData);
+
+      const now = new Date();
+      const availableSessions: LiveQuizSession[] = sessionsData?.filter(session => {
+        // Show ALL sessions that are not completed and not ended
+        if (session.status === 'in_progress') return true;
+        if (session.status === 'waiting') {
+          // If there's a scheduled end time, make sure we haven't passed it
+          if (session.scheduled_end) {
+            const endTime = new Date(session.scheduled_end);
+            return now <= endTime; // Show if we haven't passed the end time
+          }
+          return true; // Show all waiting sessions without end time
+        }
+        return false;
+      }).map(session => ({
+        id: session.id,
+        quiz_id: session.quiz_id,
+        host_id: session.host_id,
+        join_code: session.join_code,
+        status: session.status as 'waiting' | 'in_progress' | 'completed',
+        scheduled_start: session.scheduled_start ? new Date(session.scheduled_start) : undefined,
+        scheduled_end: session.scheduled_end ? new Date(session.scheduled_end) : undefined,
+        started_at: session.started_at ? new Date(session.started_at) : undefined,
+        ended_at: session.ended_at ? new Date(session.ended_at) : undefined,
+        created_at: new Date(session.created_at),
+        quiz: session.quizzes ? {
+          id: session.quizzes.id,
+          title: session.quizzes.title,
+          description: session.quizzes.description || '',
+          category: session.quizzes.category,
+          difficulty: session.quizzes.difficulty as 'Easy' | 'Medium' | 'Hard',
+          timeLimit: session.quizzes.time_limit,
+          questions: session.quizzes.questions?.map(q => ({
+            id: q.id,
+            type: q.question_type as 'multiple-choice' | 'true-false' | 'short-answer',
+            question: q.question,
+            options: q.options as string[] | undefined,
+            correctAnswer: q.correct_answer,
+            points: q.points
+          })) || [],
+          createdAt: new Date(session.quizzes.created_at)
+        } : undefined
+      })) || [];
+
+      console.log('Student: Filtered available sessions:', availableSessions);
+      console.log('Student: Sessions count:', availableSessions.length);
+      setLiveSessions(availableSessions);
+    } catch (error) {
+      console.error('Error fetching live sessions:', error);
+    }
+  };
+
+  const fetchUserWaitlists = async () => {
+    if (!user) return;
+
+    try {
+      const { data: waitlistData, error } = await supabase
+        .from('quiz_waitlist')
+        .select('session_id')
+        .eq('student_id', user.id);
+
+      if (error) {
+        console.error('Error fetching user waitlists:', error);
+        return;
+      }
+
+      const sessionIds = waitlistData?.map(item => item.session_id) || [];
+      setJoinedWaitlists(new Set(sessionIds));
+    } catch (error) {
+      console.error('Error fetching user waitlists:', error);
+    }
+  };
+
+  const fetchJoinedPrivateQuizzes = async () => {
+    if (!user) return;
+
+    try {
+      const { data: privateData, error } = await supabase
+        .from('private_quiz_participants')
+        .select('session_id')
+        .eq('student_id', user.id);
+
+      if (error) {
+        console.error('Error fetching joined private quizzes:', error);
+        return;
+      }
+
+      const sessionIds = privateData?.map(item => item.session_id) || [];
+      setJoinedPrivateQuizzes(new Set(sessionIds));
+    } catch (error) {
+      console.error('Error fetching joined private quizzes:', error);
+    }
+  };
+
+  const joinPrivateQuiz = async () => {
+    if (!user || !privateJoinCode.trim()) {
+      toast.error('Please enter a valid join code');
+      return;
+    }
+
+    try {
+      // First, find the session with this private join code
+      const { data: sessionData, error: sessionError } = await supabase
+        .from('live_quiz_sessions')
+        .select('*')
+        .eq('private_join_code', privateJoinCode.trim().toUpperCase())
+        .eq('is_private', true)
+        .single();
+
+      if (sessionError || !sessionData) {
+        toast.error('Invalid join code or quiz not found');
+        return;
+      }
+
+      // Check if already joined
+      const { data: existingParticipant } = await supabase
+        .from('private_quiz_participants')
+        .select('id')
+        .eq('session_id', sessionData.id)
+        .eq('student_id', user.id)
+        .single();
+
+      if (existingParticipant) {
+        toast.info('You are already part of this private quiz');
+        setShowPrivateJoinDialog(false);
+        setPrivateJoinCode('');
+        fetchLiveSessions(); // Refresh to show the quiz
+        return;
+      }
+
+      // Add user to private quiz participants
+      const { error: insertError } = await supabase
+        .from('private_quiz_participants')
+        .insert({
+          session_id: sessionData.id,
+          student_id: user.id
+        });
+
+      if (insertError) {
+        console.error('Error joining private quiz:', insertError);
+        toast.error('Failed to join private quiz');
+        return;
+      }
+
+      setJoinedPrivateQuizzes(prev => new Set([...prev, sessionData.id]));
+      toast.success(`Successfully joined private quiz: ${sessionData.quiz?.title || 'Quiz'}`);
+      setShowPrivateJoinDialog(false);
+      setPrivateJoinCode('');
+      
+      // Refresh live sessions to show the newly joined private quiz
+      fetchLiveSessions();
+    } catch (error) {
+      console.error('Error joining private quiz:', error);
+      toast.error('Failed to join private quiz');
     }
   };
 
@@ -586,6 +1004,7 @@ const StudentDashboard = () => {
           total_points: result.totalPoints,
           answers: result.answers,
           completed_at: result.completedAt.toISOString(),
+          // FIX: Add the time_taken property to the insert payload
           time_taken: result.timeTaken
         })
         .select()
@@ -617,22 +1036,22 @@ const StudentDashboard = () => {
     setCurrentView('dashboard');
     setSelectedQuiz(null);
     setCurrentResult(null);
+    // Don't remove from waitlist - they should stay in waitlist when leaving lobby
     setCurrentLiveSession(null);
     fetchQuizzes();
     fetchResults();
   };
+  
+// --- NO CHANGES NEEDED BELOW THIS LINE ---
+// The rest of your component's rendering logic is correct.
 
   if (loading) {
     return (
       <div className="min-h-screen p-6">
         <div className="max-w-7xl mx-auto">
-          <div className="animate-pulse space-y-6">
-            <div className="h-8 bg-gray-200 rounded w-1/3"></div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              {[1, 2, 3].map(i => (
-                <div key={i} className="h-32 bg-gray-200 rounded"></div>
-              ))}
-            </div>
+          <div className="text-center py-8">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
+            <p className="text-gray-500">Loading dashboard...</p>
           </div>
         </div>
       </div>
@@ -706,123 +1125,68 @@ const StudentDashboard = () => {
             <p className="text-gray-600 mt-1">Welcome back, {profile.displayName}!</p>
           </div>
 
-          <div className="flex gap-2">
-            {/* Join Private Quiz Button */}
-            <Button
-              onClick={() => setShowPrivateJoinDialog(true)}
-              className="flex items-center gap-2 bg-purple-600 hover:bg-purple-700"
-            >
-              <Lock className="h-4 w-4" />
-              Join Private Quiz
-            </Button>
-
-            <Dialog>
-              <DialogTrigger asChild>
-                <Button variant="outline" className="flex items-center gap-2">
-                  <User className="h-4 w-4" />
-                  My Profile
-                </Button>
-              </DialogTrigger>
-              <DialogContent className="sm:max-w-[425px]">
-                <DialogHeader>
-                  <DialogTitle>Edit Your Profile</DialogTitle>
-                </DialogHeader>
-                <div className="grid gap-4 py-4">
-                  <div className="grid grid-cols-4 items-center gap-4">
-                    <Label htmlFor="fullName" className="text-right">Full Name</Label>
-                    <Input id="fullName" value={editProfile.fullName} onChange={(e) => setEditProfile({ ...editProfile, fullName: e.target.value })} className="col-span-3"/>
-                  </div>
-                  <div className="grid grid-cols-4 items-center gap-4">
-                    <Label htmlFor="dateOfBirth" className="text-right">Date of Birth</Label>
-                    <Input id="dateOfBirth" type="date" value={editProfile.dateOfBirth} onChange={(e) => setEditProfile({ ...editProfile, dateOfBirth: e.target.value })} className="col-span-3"/>
-                  </div>
-                  <div className="grid grid-cols-4 items-center gap-4">
-                    <Label htmlFor="gender" className="text-right">Gender</Label>
-                    <Select value={editProfile.gender} onValueChange={(value) => setEditProfile({ ...editProfile, gender: value })}>
-                      <SelectTrigger className="col-span-3">
-                          <SelectValue placeholder="Select gender" />
-                      </SelectTrigger>
-                      <SelectContent>
-                          <SelectItem value="Male">Male</SelectItem>
-                          <SelectItem value="Female">Female</SelectItem>
-                          <SelectItem value="Other">Other</SelectItem>
-                          <SelectItem value="Prefer not to say">Prefer not to say</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="grid grid-cols-4 items-start gap-4">
-                      <Label className="text-right pt-2">Courses</Label>
-                      <div className="col-span-3 grid grid-cols-2 gap-2">
-                          {AVAILABLE_COURSES.map(course => (
-                              <div key={course} className="flex items-center space-x-2">
-                                  <Checkbox
-                                      id={course}
-                                      checked={editProfile.enrolledCourses.includes(course)}
-                                      onCheckedChange={() => handleCourseChange(course)}
-                                  />
-                                  <label
-                                      htmlFor={course}
-                                      className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
-                                  >
-                                      {course}
-                                  </label>
-                              </div>
-                          ))}
-                      </div>
-                  </div>
+          <Dialog>
+            <DialogTrigger asChild>
+              <Button variant="outline" className="flex items-center gap-2">
+                <User className="h-4 w-4" />
+                My Profile
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-[425px]">
+              <DialogHeader>
+                <DialogTitle>Edit Your Profile</DialogTitle>
+              </DialogHeader>
+              <div className="grid gap-4 py-4">
+                <div className="grid grid-cols-4 items-center gap-4">
+                  <Label htmlFor="fullName" className="text-right">Full Name</Label>
+                  <Input id="fullName" value={editProfile.fullName} onChange={(e) => setEditProfile({ ...editProfile, fullName: e.target.value })} className="col-span-3"/>
                 </div>
-                  <Button onClick={updateProfile} type="submit" className="w-full mt-4 bg-blue-600 hover:bg-blue-700">
-                    Save Changes
-                  </Button>
-              </DialogContent>
-            </Dialog>
-          </div>
-        </div>
+                <div className="grid grid-cols-4 items-center gap-4">
+                  <Label htmlFor="dateOfBirth" className="text-right">Date of Birth</Label>
+                  <Input id="dateOfBirth" type="date" value={editProfile.dateOfBirth} onChange={(e) => setEditProfile({ ...editProfile, dateOfBirth: e.target.value })} className="col-span-3"/>
+                </div>
+                <div className="grid grid-cols-4 items-center gap-4">
+                  <Label htmlFor="gender" className="text-right">Gender</Label>
+                  <Select value={editProfile.gender} onValueChange={(value) => setEditProfile({ ...editProfile, gender: value })}>
+                    <SelectTrigger className="col-span-3">
+                        <SelectValue placeholder="Select gender" />
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="Male">Male</SelectItem>
+                        <SelectItem value="Female">Female</SelectItem>
+                        <SelectItem value="Other">Other</SelectItem>
+                        <SelectItem value="Prefer not to say">Prefer not to say</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid grid-cols-4 items-start gap-4">
+                    <Label className="text-right pt-2">Courses</Label>
+                    <div className="col-span-3 grid grid-cols-2 gap-2">
+                        {AVAILABLE_COURSES.map(course => (
+                            <div key={course} className="flex items-center space-x-2">
+                                <Checkbox
+                                    id={course}
+                                    checked={editProfile.enrolledCourses.includes(course)}
+                                    onCheckedChange={() => handleCourseChange(course)}
+                                />
+                                <label
+                                    htmlFor={course}
+                                    className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+                                >
+                                    {course}
+                                </label>
+                            </div>
+                        ))}
+                    </div>
+                </div>
 
-        {/* Join Private Quiz Dialog */}
-        <Dialog open={showPrivateJoinDialog} onOpenChange={setShowPrivateJoinDialog}>
-          <DialogContent className="sm:max-w-[425px]">
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2">
-                <Lock className="h-5 w-5 text-purple-600" />
-                Join Private Quiz
-              </DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4 py-4">
-              <div className="space-y-2">
-                <Label htmlFor="privateCode">Enter Private Join Code</Label>
-                <Input
-                  id="privateCode"
-                  value={privateJoinCode}
-                  onChange={(e) => setPrivateJoinCode(e.target.value.toUpperCase())}
-                  placeholder="Enter code (e.g., ABC123XYZ)"
-                  className="text-center font-mono text-lg"
-                />
               </div>
-              <div className="bg-purple-50 border border-purple-200 rounded-lg p-3">
-                <p className="text-sm text-purple-800">
-                  <strong>Note:</strong> Private quizzes require a special join code from your instructor. 
-                  Once you join, the quiz will appear in your live quizzes list.
-                </p>
-              </div>
-            </div>
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => {
-                setShowPrivateJoinDialog(false);
-                setPrivateJoinCode('');
-              }}>
-                Cancel
-              </Button>
-              <Button 
-                onClick={joinPrivateQuiz}
-                disabled={!privateJoinCode.trim()}
-                className="bg-purple-600 hover:bg-purple-700"
-              >
-                Join Quiz
-              </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
+                <Button onClick={updateProfile} type="submit" className="w-full mt-4 bg-blue-600 hover:bg-blue-700">
+                  Save Changes
+                </Button>
+            </DialogContent>
+          </Dialog>
+        </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
             <div className="lg:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-6">
@@ -933,14 +1297,7 @@ const StudentDashboard = () => {
               <div className="text-center py-8">
                 <Tv className="h-12 w-12 text-gray-400 mx-auto mb-4" />
                 <h3 className="text-lg font-semibold text-gray-600 mb-2">No Live Quizzes Available</h3>
-                <p className="text-gray-500 mb-4">Check back later for live quiz sessions!</p>
-                <Button
-                  onClick={() => setShowPrivateJoinDialog(true)}
-                  className="bg-purple-600 hover:bg-purple-700"
-                >
-                  <Lock className="h-4 w-4 mr-2" />
-                  Join Private Quiz
-                </Button>
+                <p className="text-gray-500">Check back later for live quiz sessions!</p>
               </div>
             ) : (
               <div className="space-y-4">
@@ -1019,17 +1376,9 @@ const StudentDashboard = () => {
                                  hasEnded ? '⏹️ Ended' : 
                                  startTime ? '📅 Scheduled' : '⏰ Waiting'}
                               </Badge>
-                              <div className="flex items-center gap-1">
-                                {session.is_private && (
-                                  <Badge variant="outline" className="text-xs bg-purple-50 text-purple-700 border-purple-200">
-                                    <Lock className="h-3 w-3 mr-1" />
-                                    Private
-                                  </Badge>
-                                )}
-                                <Badge variant="secondary" className="text-xs">
-                                  {session.quiz?.category}
-                                </Badge>
-                              </div>
+                              <Badge variant="secondary" className="text-xs">
+                                {session.quiz?.category}
+                              </Badge>
                             </div>
                             
                             <h5 className="font-semibold text-gray-800 mb-2 line-clamp-2">{session.quiz?.title}</h5>
@@ -1150,6 +1499,216 @@ const StudentDashboard = () => {
             )}
           </CardContent>
         </Card>
+
+        {/* All Live Quizzes Modal */}
+        <Dialog open={showAllLiveQuizzes} onOpenChange={setShowAllLiveQuizzes}>
+          <DialogContent className="max-w-4xl max-h-[80vh] overflow-hidden">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Tv className="h-5 w-5 text-red-600" />
+                All Live Quizzes ({liveSessions.length})
+              </DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              {/* Category Filters in Modal */}
+              {(() => {
+                const liveCategories = [...new Set(liveSessions.map(s => s.quiz?.category).filter(Boolean))];
+                return liveCategories.length > 1 && (
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      variant={selectedLiveCategory === 'all' ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => setSelectedLiveCategory('all')}
+                    >
+                      All ({liveSessions.length})
+                    </Button>
+                    {liveCategories.map((category) => {
+                      const count = liveSessions.filter(s => s.quiz?.category === category).length;
+                      return (
+                        <Button
+                          key={category}
+                          variant={selectedLiveCategory === category ? 'default' : 'outline'}
+                          size="sm"
+                          onClick={() => setSelectedLiveCategory(category)}
+                        >
+                          {category} ({count})
+                        </Button>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+
+              {/* Scrollable Quiz List */}
+              <div className="max-h-[50vh] overflow-y-auto space-y-3">
+                {liveSessions
+                  .filter(session => selectedLiveCategory === 'all' || session.quiz?.category === selectedLiveCategory)
+                  .map((session) => {
+                    const now = new Date();
+                    const startTime = session.scheduled_start ? new Date(session.scheduled_start) : null;
+                    const endTime = session.scheduled_end ? new Date(session.scheduled_end) : null;
+                    
+                    // Calculate time until start
+                    const timeUntilStart = startTime ? Math.max(0, startTime.getTime() - now.getTime()) : 0;
+                    const isStartingSoon = timeUntilStart > 0 && timeUntilStart <= 30 * 60 * 1000; // 30 minutes
+                    const shouldBeActive = !startTime || now >= startTime;
+                    const hasEnded = endTime && now > endTime;
+                    
+                    // Auto-start logic: if scheduled time has passed, quiz should be active
+                    const isLive = session.status === 'in_progress' || shouldBeActive;
+                    const isInWaitlist = joinedWaitlists.has(session.id);
+                    
+                    // Format time remaining
+                    const formatTimeRemaining = (ms: number) => {
+                      const minutes = Math.floor(ms / (1000 * 60));
+                      const hours = Math.floor(minutes / 60);
+                      const days = Math.floor(hours / 24);
+                      
+                      if (days > 0) return `${days}d ${hours % 24}h`;
+                      if (hours > 0) return `${hours}h ${minutes % 60}m`;
+                      return `${minutes}m`;
+                    };
+                    
+                    return (
+                      <Card key={session.id} className="border-red-200">
+                        <CardContent className="p-4">
+                          <div className="flex items-center justify-between">
+                            <div className="flex-1">
+                              <div className="flex items-center gap-3 mb-2">
+                                <h5 className="font-semibold text-gray-800">{session.quiz?.title}</h5>
+                                <Badge 
+                                  variant={isLive ? 'destructive' : isStartingSoon ? 'default' : 'outline'}
+                                  className={isLive ? 'animate-pulse' : ''}
+                                >
+                                  {isLive ? '🔴 Live Now' : 
+                                   isStartingSoon ? '🔥 Starting Soon' : 
+                                   hasEnded ? '⏹️ Ended' : 
+                                   startTime ? '📅 Scheduled' : '⏰ Waiting'}
+                                </Badge>
+                                <Badge variant="secondary">{session.quiz?.category}</Badge>
+                              </div>
+                              <p className="text-sm text-gray-600 mb-2">{session.quiz?.description}</p>
+                              
+                              {/* Timing Information */}
+                              {startTime && (
+                                <div className="bg-gray-50 rounded-lg p-2 mb-2 text-xs">
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div>
+                                      <span className="text-gray-600">
+                                        {session.status === 'in_progress' ? 'Started:' : 'Starts:'}
+                                      </span>
+                                      <div className="font-medium">
+                                        {startTime.toLocaleDateString()} at {startTime.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                                      </div>
+                                    </div>
+                                    {endTime && (
+                                      <div>
+                                        <span className="text-gray-600">Ends:</span>
+                                        <div className="font-medium">
+                                          {endTime.toLocaleDateString()} at {endTime.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                  {!shouldBeActive && timeUntilStart > 0 && (
+                                    <div className="mt-2 pt-2 border-t border-gray-200">
+                                      <span className="text-gray-600">Time until start: </span>
+                                      <span className={`font-medium ${isStartingSoon ? 'text-orange-600' : 'text-blue-600'}`}>
+                                        {formatTimeRemaining(timeUntilStart)}
+                                      </span>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                              
+                              <div className="flex items-center gap-4 text-xs text-gray-500">
+                                <span className="flex items-center gap-1">
+                                  <Users className="h-3 w-3" />
+                                  {session.quiz?.questions.length} Questions
+                                </span>
+                                <span className="flex items-center gap-1">
+                                  <Clock className="h-3 w-3" />
+                                  {session.quiz?.timeLimit} Minutes
+                                </span>
+                                <Badge className={getDifficultyColor(session.quiz?.difficulty || 'Medium')} variant="outline">
+                                  {session.quiz?.difficulty}
+                                </Badge>
+                              </div>
+                            </div>
+                            <Button
+                              className={
+                                isLive ? 'bg-red-600 hover:bg-red-700 animate-pulse' : 
+                                isInWaitlist ? 'bg-green-600 hover:bg-green-700' :
+                                isStartingSoon ? 'bg-orange-600 hover:bg-orange-700' :
+                                hasEnded ? 'bg-gray-400 cursor-not-allowed' :
+                                'bg-blue-600 hover:bg-blue-700'
+                              }
+                              onClick={() => {
+                                if (isLive) {
+                                  joinLiveSession(session);
+                                  setShowAllLiveQuizzes(false);
+                                } else if (isInWaitlist) {
+                                  // If already in waitlist, show option to view lobby
+                                  setCurrentLiveSession(session);
+                                  setCurrentView('live-lobby');
+                                  setShowAllLiveQuizzes(false);
+                                } else {
+                                  joinLiveSession(session);
+                                  setShowAllLiveQuizzes(false);
+                                }
+                              }}
+                              disabled={hasEnded}
+                            >
+                              {isLive ? (
+                                <>
+                                  <Play className="h-4 w-4 mr-2" />
+                                  Join Live
+                                </>
+                              ) : hasEnded ? (
+                                <>
+                                  <Clock className="h-4 w-4 mr-2" />
+                                  Ended
+                                </>
+                              ) : isInWaitlist ? (
+                                <>
+                                  <Users className="h-4 w-4 mr-2" />
+                                  View Lobby
+                                </>
+                              ) : isStartingSoon ? (
+                                <>
+                                  <Clock className="h-4 w-4 mr-2" />
+                                  Join Waitlist
+                                </>
+                              ) : (
+                                <>
+                                  <Calendar className="h-4 w-4 mr-2" />
+                                  Join Waitlist
+                                </>
+                              )}
+                            </Button>
+                          </div>
+                          
+                          {/* Add a secondary section for leaving waitlist when user is in waitlist */}
+                          {isInWaitlist && !isLive && (
+                            <div className="flex mt-3 pt-3 border-t border-gray-200">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="w-full text-red-600 border-red-200 hover:bg-red-50"
+                                onClick={() => leaveWaitlist(session.id)}
+                              >
+                                Leave Waitlist
+                              </Button>
+                            </div>
+                          )}
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
 
         <div className="flex border-b mb-6">
             <Button
