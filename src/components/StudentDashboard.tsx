@@ -18,9 +18,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Database } from '@/types/supabase';
-import { Checkbox } from '@/components/ui/checkbox'; // <-- 1. FEATURE: Import Checkbox
+import { Checkbox } from '@/components/ui/checkbox';
 
-// 2. FEATURE: Define a list of available courses for selection
 const AVAILABLE_COURSES = [
     "Mathematics",
     "Physics",
@@ -29,7 +28,9 @@ const AVAILABLE_COURSES = [
     "History",
     "Geography",
     "Computer Science",
-    "Literature"
+    "Literature",
+    "Economics",
+    "programming"
 ];
 
 type Profile = Database['public']['Tables']['profiles']['Row'];
@@ -52,7 +53,6 @@ const StudentDashboard = () => {
     enrolledCourses: [] as string[],
   });
 
-  // 3. FEATURE: Add enrolledCourses to the editable profile state
   const [editProfile, setEditProfile] = useState({
     fullName: '',
     dateOfBirth: '',
@@ -87,14 +87,13 @@ const StudentDashboard = () => {
         setProfile({
           displayName: data.full_name || user.email || 'Student',
           email: user.email || 'No email provided',
-          dateOfJoining: new Date(data.created_at), // This is the date of enrollment
+          dateOfJoining: new Date(data.created_at),
           enrolledCourses: data.enrolled_courses ?? ['General Knowledge'],
         });
         setEditProfile({
           fullName: data.full_name || '',
           dateOfBirth: data.date_of_birth ?? '',
           gender: data.gender ?? 'Prefer not to say',
-          // 4. FEATURE: Initialize editable courses from fetched data
           enrolledCourses: data.enrolled_courses ?? [],
         });
       }
@@ -113,7 +112,6 @@ const StudentDashboard = () => {
           full_name: editProfile.fullName,
           date_of_birth: editProfile.dateOfBirth,
           gender: editProfile.gender,
-          // 5. FEATURE: Add enrolled_courses to the update payload
           enrolled_courses: editProfile.enrolledCourses,
           updated_at: new Date().toISOString(),
         })
@@ -131,12 +129,11 @@ const StudentDashboard = () => {
     }
   };
 
-  // Handler for course checkbox changes
   const handleCourseChange = (course: string) => {
     setEditProfile(prev => {
         const newCourses = prev.enrolledCourses.includes(course)
-            ? prev.enrolledCourses.filter(c => c !== course) // Uncheck: remove course
-            : [...prev.enrolledCourses, course]; // Check: add course
+            ? prev.enrolledCourses.filter(c => c !== course)
+            : [...prev.enrolledCourses, course];
         return { ...prev, enrolledCourses: newCourses };
     });
   };
@@ -187,7 +184,8 @@ const StudentDashboard = () => {
     try {
       const { data: resultsData, error } = await supabase
         .from('quiz_results')
-        .select(`*, profiles:student_id (full_name)`)
+        // FIX: Ensure you are selecting the time_taken column
+        .select(`*, time_taken, profiles:student_id (full_name)`)
         .eq('student_id', user.id);
 
       if (error) {
@@ -202,7 +200,9 @@ const StudentDashboard = () => {
         score: result.score,
         totalPoints: result.total_points,
         completedAt: new Date(result.completed_at),
-        answers: result.answers as Record<string, string>
+        answers: result.answers as Record<string, string>,
+        // FIX: Add the timeTaken property, with a fallback for old results
+        timeTaken: result.time_taken ?? 0
       })) || [];
 
       setResults(formattedResults);
@@ -242,7 +242,9 @@ const StudentDashboard = () => {
           score: result.score,
           total_points: result.totalPoints,
           answers: result.answers,
-          completed_at: result.completedAt.toISOString()
+          completed_at: result.completedAt.toISOString(),
+          // FIX: Add the time_taken property to the insert payload
+          time_taken: result.timeTaken
         })
         .select()
         .single();
@@ -276,6 +278,9 @@ const StudentDashboard = () => {
     fetchQuizzes();
     fetchResults();
   };
+  
+// --- NO CHANGES NEEDED BELOW THIS LINE ---
+// The rest of your component's rendering logic is correct.
 
   if (loading) {
     return (
@@ -374,7 +379,6 @@ const StudentDashboard = () => {
                     </SelectContent>
                   </Select>
                 </div>
-                {/* 6. FEATURE: Add selectable course list to dialog */}
                 <div className="grid grid-cols-4 items-start gap-4">
                     <Label className="text-right pt-2">Courses</Label>
                     <div className="col-span-3 grid grid-cols-2 gap-2">
@@ -464,7 +468,6 @@ const StudentDashboard = () => {
                     </div>
                      <div className="flex items-center gap-3">
                         <Calendar className="h-5 w-5 text-gray-500" />
-                        {/* This shows the date of enrollment */}
                         <span className="text-gray-700">Joined on: {profile.dateOfJoining.toLocaleDateString()}</span>
                     </div>
                     <div>

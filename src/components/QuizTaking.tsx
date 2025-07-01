@@ -7,6 +7,7 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Progress } from '@/components/ui/progress';
 import { Clock, ArrowLeft, ArrowRight, Send } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
+// Ensure this imported type includes `timeTaken: number;`
 import type { Quiz, QuizResult } from '@/types/quiz';
 
 interface QuizTakingProps {
@@ -31,7 +32,8 @@ const QuizTaking = ({ quiz, onComplete, onBack }: QuizTakingProps) => {
     const timer = setInterval(() => {
       setTimeRemaining((prev) => {
         if (prev <= 1) {
-          handleSubmit();
+          // Use a callback with handleSubmit to ensure state is up-to-date
+          handleSubmit(true); 
           return 0;
         }
         return prev - 1;
@@ -63,25 +65,30 @@ const QuizTaking = ({ quiz, onComplete, onBack }: QuizTakingProps) => {
     }
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = (isAutoSubmit = false) => {
     let totalScore = 0;
     const totalPoints = quiz.questions.reduce((acc, q) => acc + q.points, 0);
 
     quiz.questions.forEach((question) => {
       const userAnswer = answers[question.id];
-      if (userAnswer && userAnswer.toLowerCase() === question.correctAnswer.toLowerCase()) {
+      if (userAnswer && userAnswer.trim().toLowerCase() === question.correctAnswer.trim().toLowerCase()) {
         totalScore += question.points;
       }
     });
 
+    // 1. FEATURE: Calculate the time taken in seconds.
+    const timeTakenInSeconds = (quiz.timeLimit * 60) - (isAutoSubmit ? 0 : timeRemaining);
+
     const result: QuizResult = {
       id: Date.now().toString(),
       quizId: quiz.id,
-      studentName: user?.email || 'Anonymous',
+      studentName: user?.email || 'Anonymous', // Recommended to use a display name if available
       score: totalScore,
       totalPoints,
       completedAt: new Date(),
-      answers
+      answers,
+      // 2. FEATURE: Add the `timeTaken` property to the result object.
+      timeTaken: timeTakenInSeconds,
     };
 
     onComplete(result);
@@ -135,7 +142,7 @@ const QuizTaking = ({ quiz, onComplete, onBack }: QuizTakingProps) => {
               </ul>
             </div>
 
-            <Button 
+            <Button
               onClick={() => setIsStarted(true)}
               className="w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-lg py-3"
             >
@@ -251,7 +258,7 @@ const QuizTaking = ({ quiz, onComplete, onBack }: QuizTakingProps) => {
 
           {currentQuestionIndex === quiz.questions.length - 1 ? (
             <Button
-              onClick={handleSubmit}
+              onClick={() => handleSubmit(false)}
               className="bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 flex items-center gap-2"
             >
               <Send className="h-4 w-4" />
