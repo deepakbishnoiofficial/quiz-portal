@@ -103,10 +103,10 @@ const LiveQuizCreator = ({ isOpen, onClose, onSessionCreated }: LiveQuizCreatorP
     // Combine date and time
     const [startHour, startMinute] = startTime.split(':');
     const [endHour, endMinute] = endTime.split(':');
-    
+
     const finalStartTime = new Date(scheduledStart);
     finalStartTime.setHours(parseInt(startHour), parseInt(startMinute), 0, 0);
-    
+
     const finalEndTime = new Date(scheduledEnd);
     finalEndTime.setHours(parseInt(endHour), parseInt(endMinute), 0, 0);
 
@@ -115,6 +115,7 @@ const LiveQuizCreator = ({ isOpen, onClose, onSessionCreated }: LiveQuizCreatorP
       return;
     }
 
+    // Check if the scheduled start time is in the future relative to the current moment
     if (finalStartTime <= new Date()) {
       toast.error('Start time must be in the future');
       return;
@@ -125,7 +126,7 @@ const LiveQuizCreator = ({ isOpen, onClose, onSessionCreated }: LiveQuizCreatorP
     try {
       let joinCode = null;
       let privateJoinCode = null;
-      
+
       if (isPrivate) {
         // For private quizzes, only generate private join code
         privateJoinCode = generatePrivateJoinCode();
@@ -133,7 +134,7 @@ const LiveQuizCreator = ({ isOpen, onClose, onSessionCreated }: LiveQuizCreatorP
         // For public quizzes, only generate regular join code
         joinCode = generateJoinCode();
       }
-      
+
       console.log('Creating live quiz session with data:', {
         quiz_id: selectedQuizId,
         host_id: user?.id,
@@ -144,7 +145,7 @@ const LiveQuizCreator = ({ isOpen, onClose, onSessionCreated }: LiveQuizCreatorP
         is_private: isPrivate,
         private_join_code: privateJoinCode
       });
-      
+
       const { data: sessionData, error } = await supabase
         .from('live_quiz_sessions')
         .insert({
@@ -222,7 +223,7 @@ const LiveQuizCreator = ({ isOpen, onClose, onSessionCreated }: LiveQuizCreatorP
       } else {
         toast.success(`Live quiz session created! Students can join with code: ${joinCode}`);
       }
-      
+
       onSessionCreated(newSession);
       resetForm();
       onClose();
@@ -244,6 +245,10 @@ const LiveQuizCreator = ({ isOpen, onClose, onSessionCreated }: LiveQuizCreatorP
   };
 
   const selectedQuiz = quizzes.find(q => q.id === selectedQuizId);
+
+  // Get the start of today for comparison
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -336,7 +341,7 @@ const LiveQuizCreator = ({ isOpen, onClose, onSessionCreated }: LiveQuizCreatorP
                 </Label>
               </div>
             </div>
-            
+
             {isPrivate && (
               <Card className="bg-amber-50 border-amber-200">
                 <CardContent className="pt-4">
@@ -345,7 +350,7 @@ const LiveQuizCreator = ({ isOpen, onClose, onSessionCreated }: LiveQuizCreatorP
                     <div className="text-sm">
                       <p className="font-medium text-amber-800">Private Quiz Mode</p>
                       <p className="text-amber-700">
-                        A unique join code will be generated that you can share with specific students. 
+                        A unique join code will be generated that you can share with specific students.
                         Only students who enter this code will be able to see and join the quiz.
                       </p>
                     </div>
@@ -379,7 +384,8 @@ const LiveQuizCreator = ({ isOpen, onClose, onSessionCreated }: LiveQuizCreatorP
                       mode="single"
                       selected={scheduledStart}
                       onSelect={setScheduledStart}
-                      disabled={(date) => date < new Date()}
+                      // Allow today's date or any future date
+                      disabled={(date) => date < today}
                       initialFocus
                     />
                   </PopoverContent>
@@ -415,7 +421,8 @@ const LiveQuizCreator = ({ isOpen, onClose, onSessionCreated }: LiveQuizCreatorP
                       mode="single"
                       selected={scheduledEnd}
                       onSelect={setScheduledEnd}
-                      disabled={(date) => date < new Date()}
+                      // Allow today's date or any future date
+                      disabled={(date) => date < today}
                       initialFocus
                     />
                   </PopoverContent>
@@ -435,8 +442,8 @@ const LiveQuizCreator = ({ isOpen, onClose, onSessionCreated }: LiveQuizCreatorP
             <Button variant="outline" onClick={onClose} disabled={loading}>
               Cancel
             </Button>
-            <Button 
-              onClick={createLiveQuizSession} 
+            <Button
+              onClick={createLiveQuizSession}
               disabled={loading || quizzes.length === 0 || !selectedQuizId}
             >
               {loading ? 'Creating...' : 'Schedule Live Quiz'}
